@@ -231,6 +231,7 @@ def summarize( fileName, summName, limit=0, sample=1, hasHead=True ):
 #     If the trip took less than 10 minutes, some Lon/Lat fields are blank.
 
 def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
+    sample = int( max( 1, sample ))
     source = open( fileName, 'r' )
     destiny = open( prepName, 'w' )
     table = csv.reader( source )
@@ -313,7 +314,7 @@ def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
                 destiny.write( ",".join(line1)  )
                 destiny.write( "\n" )
             count += 1
-        if count == limit: break
+        if count == limit*sample: break
         if isInteresting( count ):
             print( "At", count )
     source.close()
@@ -516,6 +517,8 @@ def geodirname( angle ):
 # of the previous day, and the hours of a day run from 4:00 to 28:00.
 # For example, Jan 4 at 1:30 AM is treated as Jan 3 at 25:30. This is
 # done to help capture taxi-usage patterns that run across midnight.
+
+# Schedule of holidays comes from http://www.timeanddate.com/holidays/portugal/2014
 
 PortugalHolidays = [
     20130101, 20130329, 20130331, 20130425, 20130501,
