@@ -202,64 +202,65 @@ def summarize( fileName, summName, limit=0, sample=1, hasHead=True ):
 #     CSV data of taxi trips in standard Porto format
 #
 # Output file:
-#     CSV data file of all or a subset of the taxi trips, with these columns:
-#         Trip Id - First seven fields, same as source data file
+#     CSV data file with these columns:
+#         Trip Id - Id of the trip (assigned here, not from source)
 #         Call Type
 #         Origin Call
-#         Origin Stand
 #         Taxi Id
-#         Timestamp
-#         Day Type
+#         Timestamp - Time that trip started 
 #         Week_Day - Day of week, 0..6 for Sun..Sat
 #         Day_Busy - Type of day, WD=workday, WE=weekend, HOL=holiday
 #         Day_Hour - Time of day in hours, bounded 4..28 (4AM to 4AM)
-#         Missing Data - True if GPS trip data was incomplete
 #         Drive Dist - Distance that taxi drove, in metres
 #         Trip Dist - Linear distance from start point to end point
 #         Trip Time - Duration of trip, in minutes
+#         Snapshot Time - Minutes into the trip of this snapshot
 #         Lon Start - Longitude of starting point
 #         Lat Start - Latitude of starting point
-#         Lon 02 - Longitude at 2 minutes into the trip
-#         Lat 02 - Latitude at 2 minutes into the trip
-#         Lon 05 - at 5 minutes
-#         Lat 05
-#         Lon 10 - at 10 minutes
-#         Lat 10
+#         Lon 06 - Longitude at 6 minutes prior to snapshot time
+#         Lat 06 - Latitude at 6 minutes prior to snapshot time
+#         Lon 03 - at 3 minutes prior
+#         Lat 03
+#         Lon 00 - at snapshot time
+#         Lat 00 - 
 #         Lon Finish - at the finish of the trip
 #         Lat Finish
 #
 #     If the trip took less than 10 minutes, some Lon/Lat fields are blank.
 
 def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
-    sample = int( max( 1, sample ))
     source = open( fileName, 'r' )
     destiny = open( prepName, 'w' )
     table = csv.reader( source )
     labels = [ ]
-    excuses = [0] * 5
-    count = 0
+    excuses = [0] * 6
+    inCount = 0
+    outCount = 0
+    sample = int( max( 1, sample ))
     for line in table:
         if len(labels) == 0 and hasHead:
+ 
             # The input file has a header row,
             # so write a header row to the output file
             labels = line
-            labels1 = line[0:7]
-            labels1.extend([
-                "WEEK_DAY", "DAY_BUSY", "DAY_HOUR",
-                "MISSING_DATA",
-                "DRIVE_DIST",
-                "TRIP_DIST", "TRIP_TIME",
+            labels1 = [
+                "TRIP_ID", "CALL_TYPE", "ORIGIN_CALL", "TAXI_ID",
+                "TIMESTAMP", "WEEK_DAY", "DAY_BUSY", "DAY_HOUR",
+                "DRIVE_DIST", "TRIP_DIST", "TRIP_TIME", "SNAP_TIME",
                 "LON_START", "LAT_START",
-                "LON_02", "LAT_02",
-                "LON_05", "LAT_05",
-                "LON_10", "LAT_10",
-                "LON_FINISH", "LAT_FINISH" ])
+                "LON_2P", "LAT_2P",
+                "LON_1P", "LAT_1P",
+                "LON_00", "LAT_00",
+                "LON_FINISH", "LAT_FINISH" ]
             destiny.write( ",".join(labels1)  )
             destiny.write( "\n" )
+
         else:
-            if count % sample == 0:
+            inCount += 1
+            if inCount % sample == 0:
                 waypoints = []
                 drivedist = tripdist = triptime = 0
+
                 # Preprocess the atoms of input.
                 # - here only the trip waypoints (polyline) needs work
                 for (label,atom) in zip( labels, line ):
@@ -270,6 +271,7 @@ def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
                                 waypoints[0][0], waypoints[0][1],
                                 waypoints[-1][0], waypoints[-1][1])
                         triptime = 0.25 * max( 0, len(waypoints)-1 )
+
                 # Check if this row is an outlier
                 # - if it is, we'll ignore it for now
                 # - but common outliers we should figure out how to handle
@@ -278,60 +280,89 @@ def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
                     # trip too short, less than 30 seconds
                     excuses[1] += 1
                 elif tripdist < 30:
-                    # trip too short, less than 30 metres distance
+                    # trip too short, less than 30 metres
                     excuses[2] += 1
                 elif drivedist / triptime < 5:
                     # average speed too slow, less than 5 km/h
                     excuses[3] += 1
                 elif max( (here[2] for here in waypoints) ) > 625:
-                    # speed too high, over 150 km/h (625 m/15s) at some point
+                    # speed too high, over 150 km/h (625m/15s) at some point
                     excuses[4] += 1
+                elif line[7][0:1] == 'T':
+                    # source flagged as having missing data
+                    excuses[5] += 1
                 else:
+
                     # The data looks good, so we are happy
                     happy = True
                     excuses[0] += 1
-                # Construct the output row
-                # - starting with the first seven input fields verbatim
-                line1 = line[0:7]
-                timeinfo = decodestamp( line[5] )
-                line1.append( str(timeinfo[2]) ) # day of week
-                line1.append( str(timeinfo[3]) ) # type of day
-                line1.append( "{:.3f}".format(timeinfo[4]) ) # hour of day
-                line1.append(
-                        "True" if len(waypoints)==0 else
-                        "True" if len(line)<7 or line[7][0:1]=='T' else
-                        "False" )
-                line1.append( "{:.0f}".format( drivedist ))
-                line1.append( "{:.0f}".format( tripdist ))
-                line1.append( "{:.2f}".format( triptime ))
-                for ix in [0, 2*4, 5*4, 10*4, -1]:
-                    if -len(waypoints) <= ix < len(waypoints):
-                        here = waypoints[ix]
-                        line1.append( "{:.6f},{:.6f}". format( here[0], here[1] ))
-                    else:
-                        line1.append( "," )
-                # Write the row
-                destiny.write( ",".join(line1)  )
-                destiny.write( "\n" )
-            count += 1
-        if count == limit*sample: break
-        if isInteresting( count ):
-            print( "At", count )
+
+                    # Write one or more output rows for this trip.
+                    # Each row shares the same per-trip data, but
+                    # each row has a different set of location points
+                    # based on snapshots taken along the trip route.
+
+                    line1 = [str(inCount), line[1], line[2], line[4], line[5]]
+                    timeinfo = decodestamp( line[5] )
+                    line1.append( str(timeinfo[2]) ) # day of week
+                    line1.append( str(timeinfo[3]) ) # type of day
+                    line1.append( "{:.3f}".format(timeinfo[4]) ) # hour of day
+                    line1.append( "{:.0f}".format( drivedist ))
+                    line1.append( "{:.0f}".format( tripdist ))
+                    line1.append( "{:.2f}".format( triptime ))
+
+                    # For each three-minute interval along the way
+                    gap = floor(2.5 * 4)
+                    for ix in range( gap, len(waypoints), gap ):
+                        # Number of minutes into the trip
+                        line1.append( str(ix/4) )
+                        # Location at start of trip
+                        here = waypoints[0]
+                        line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
+                        # Location 6 minutes prior to snap
+                        here = waypoints[ max( 0, ix-2*gap ) ]
+                        line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
+                        # Location 3 minutes prior to snap
+                        here = waypoints[ ix-gap ]
+                        line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
+                        # Location at time of snapshot
+                        here = waypoints[ ix ]
+                        line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
+                        # Location at end of trip
+                        here = waypoints[ -1 ]
+                        line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
+                        # Write the row
+                        destiny.write( ",".join(line1)  )
+                        destiny.write( "\n" )
+                        outCount += 1
+                        line1[-6:] = []
+
+                    pass # for each output line
+                pass # if input data is good
+            pass # if input is selected for the sample
+            if inCount/sample == limit: break
+            if isInteresting( inCount ):
+                print( "At", inCount )
+        pass # if input was data row (not header)
+    pass # for each input row
+ 
     source.close()
     destiny.close()
-    print( "End at", count )
-    if count > 0:
+    print( "End at", inCount )
+    if inCount > 0:
         print( "-", excuses[0], "accepted" )
         print( "-", excuses[1], "ignored - trip less than 30 seconds" )
         print( "-", excuses[2], "ignored - trip less than 30 metres" )
         print( "-", excuses[3], "ignored - taxi averaged under 5 km/h" )
         print( "-", excuses[4], "ignored - taxi exceeded 150 km/h" )
-    return count
+        print( "-", excuses[5], "ignored - source 'missing data' flag set" )
+        print( "Flattened", excuses[0], "to", outCount )
+    return inCount
 
 # CHOOSE FILE - Invite the user to select a file in a chooser window
 #
-# Use TK windowing toolkit. Need to initialize with 'withdraw' to prevent
-# the application from displaying a main window.
+# Use TK windowing toolkit. Need to initialize with 'withdraw'
+# to prevent the toolkit from trying to display a main window.
 
 tk_root = tk.Tk()
 tk_root.withdraw()
@@ -345,10 +376,10 @@ def chooseFile():
 # I.e., return true for two-powers and sesqui-two-powers.
 
 def isInteresting( num ):
-    red = num & (num-1)
-    return (red == 0
-        or  red & (red-1) == 0
-        and num & (num>>1) != 0)
+    red = num & (num-1) # chops lowest bit from binary number
+    return (red == 0 # num has only one '1' bit => power of 2
+        or  red & (red-1) == 0 # num has only two bits and
+        and num & (num>>1) != 0) # two bits are adjacent => 3 x power of 2
 
 # ANNOTATE - Return an annotation that hopefully clarifies an atom of data
 
@@ -518,8 +549,6 @@ def geodirname( angle ):
 # For example, Jan 4 at 1:30 AM is treated as Jan 3 at 25:30. This is
 # done to help capture taxi-usage patterns that run across midnight.
 
-# Schedule of holidays comes from http://www.timeanddate.com/holidays/portugal/2014
-
 PortugalHolidays = [
     20130101, 20130329, 20130331, 20130425, 20130501,
     20130610, 20130815, 20131208, 20131225,
@@ -558,4 +587,3 @@ if __name__ == "__main__" and COMMANDED:
         exit( 2 )
     else:
         illume( args[0], args[1] if len(args)>=2 else 10 )
-
