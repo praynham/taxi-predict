@@ -11,7 +11,8 @@
 #    Array of predictions:
 #    - one row per test trip
 #    - columns: predicted longitude, predicted latitude,
-#        error in longitude prediction, error in latitude prediction.
+#        error in longitude prediction, error in latitude prediction,
+#        overall error in prediction (relative distance from actual)
 #    Prediction error is a measure of how many standard deviations
 #    the prediction is from the actual trip.
 
