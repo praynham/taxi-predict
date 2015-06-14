@@ -29,6 +29,7 @@ COMMANDED = False   # Is this script run as a stand-alone command?
 #     limit - not 0 => print up to 'limit' number of entries
 #         0 => print entries 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, ...
 #     start - if limit is not 0 => start printing at entry 'start'
+#     sample - if limit is not 0 => print only 1/sample entries
 #     hasHead - True => taxi data file has a header row
 #
 # Notes:
@@ -39,12 +40,13 @@ COMMANDED = False   # Is this script run as a stand-alone command?
 #     for the data fields in the printed output. If there is no header row,
 #     then the data fields are labeled by position: 1, 2, 3, etc.
 
-def illume( filename, limit=10, start=0, hasHead=True ):
+def illume( filename, limit=10, start=0, sample=1, hasHead=True ):
     source = open( filename, 'r' )
     table = csv.reader( source )
     labels = [ ]
     labelwidth = 3
-    finis = start + limit
+    sample = max( 1, sample )
+    finis = start + sample*limit
     count = 0
     for line in table:
         if len(labels) == 0 and hasHead:
@@ -52,8 +54,13 @@ def illume( filename, limit=10, start=0, hasHead=True ):
             labelwidth = max(( len(label) for label in labels ))
             labelwidth = max( 3, labelwidth )
         else:
-            if (limit != 0 and count >= start and count < finis
-            or limit == 0 and isInteresting(count)):
+            count += 1
+            if (limit != 0
+            and count >= start
+            and count < finis
+            and (count-start)%sample == 0
+            or limit == 0
+            and isInteresting(count)):
                 print( "__", count, "_"*labelwidth, sep="" )
                 while len(labels) < len(line):
                     labels .append( str(len(labels)+1) )
@@ -87,7 +94,6 @@ def illume( filename, limit=10, start=0, hasHead=True ):
                         print( '{:s}: {:s}{:s}'.format(
                                 label.rjust(labelwidth), atom, suffix ))
                 print()
-            count += 1
         if limit != 0 and count >= finis: break
     if count > 0:
         print( "_" * (labelwidth+2) )
@@ -160,6 +166,7 @@ def summarize( fileName, summName, limit=0, sample=1, hasHead=True ):
             summary.write( ",".join(labels1)  )
             summary.write( "\n" )
         else:
+            count += 1
             if count % sample == 0:
                 for (label,atom) in zip( labels, line ):
                     if label == 'POLYLINE':
@@ -178,7 +185,6 @@ def summarize( fileName, summName, limit=0, sample=1, hasHead=True ):
                 line1.append( "{:.2f}".format( 0.25 * max( 0, len(waypoints)-1 )))
                 summary.write( ",".join(line1)  )
                 summary.write( "\n" )
-        count += 1
         if count == limit: break
         if isInteresting( count ):
             print( "At", count )
@@ -217,8 +223,10 @@ def summarize( fileName, summName, limit=0, sample=1, hasHead=True ):
 #         Snapshot Time - Minutes into the trip of this snapshot
 #         Lon Start - Longitude of starting point
 #         Lat Start - Latitude of starting point
-#         Lon 06 - Longitude at 6 minutes prior to snapshot time
-#         Lat 06 - Latitude at 6 minutes prior to snapshot time
+#         Lon 06 - Longitude at 9 minutes prior to snapshot time
+#         Lat 06 - Latitude at 9 minutes prior to snapshot time
+#         Lon 03 - at 6 minutes prior
+#         Lat 03
 #         Lon 03 - at 3 minutes prior
 #         Lat 03
 #         Lon 00 - at snapshot time
@@ -228,15 +236,41 @@ def summarize( fileName, summName, limit=0, sample=1, hasHead=True ):
 #
 #     If the trip took less than 10 minutes, some Lon/Lat fields are blank.
 
-def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
+def prepare( fileName, prepName,
+             limit=0, sample=(0,1), delta=(2.5,2.5),
+             hasHead=True ):
+
+    # Validate parameters
+    try:
+        (sampleSkew, sampleRate) = sample
+    except:
+        (sampleSkew, sampleRate) = (0, sample)
+    sampleRate = int( max( 1, sampleRate ))
+    if not 0 <= sampleSkew < sampleRate:
+        raise Exception(
+                "Skew must be in range of sample rate - " +
+                "sample=(i,n) requires 0 <= i < n" )
+    try:
+        (wpFreq, wpStep) = delta
+    except:
+        (wpFreq, wpStep) = (delta, delta)
+    if wpFreq <= 0 or wpStep <= 0:
+        raise Exception(
+                "Timetamp sample rate must be positive - " +
+                "e.g., delta=1.5 for sample every 1.5 minutes" )
+    wpFreq, wpStep = floor(4*wpFreq), floor(4*wpStep)
+
+    # Open the files
     source = open( fileName, 'r' )
     destiny = open( prepName, 'w' )
     table = csv.reader( source )
+
+    # Initialize counters
     labels = [ ]
     excuses = [0] * 6
     inCount = 0
     outCount = 0
-    sample = int( max( 1, sample ))
+    
     for line in table:
         if len(labels) == 0 and hasHead:
  
@@ -248,6 +282,7 @@ def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
                 "TIMESTAMP", "WEEK_DAY", "DAY_BUSY", "DAY_HOUR",
                 "DRIVE_DIST", "TRIP_DIST", "TRIP_TIME", "SNAP_TIME",
                 "LON_START", "LAT_START",
+                "LON_3P", "LAT_3P",
                 "LON_2P", "LAT_2P",
                 "LON_1P", "LAT_1P",
                 "LON_00", "LAT_00",
@@ -257,7 +292,7 @@ def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
 
         else:
             inCount += 1
-            if inCount % sample == 0:
+            if inCount % sampleRate == sampleSkew:
                 waypoints = []
                 drivedist = tripdist = triptime = 0
 
@@ -311,19 +346,22 @@ def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
                     line1.append( "{:.0f}".format( tripdist ))
                     line1.append( "{:.2f}".format( triptime ))
 
-                    # For each three-minute interval along the way
-                    gap = floor(2.5 * 4)
-                    for ix in range( gap, len(waypoints), gap ):
+                    # For each waypoint-frequency interval along the way
+                    for ix in range( 0, len(waypoints), wpFreq ):
+                        baseSize = len(line1)
                         # Number of minutes into the trip
                         line1.append( str(ix/4) )
                         # Location at start of trip
                         here = waypoints[0]
                         line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
-                        # Location 6 minutes prior to snap
-                        here = waypoints[ max( 0, ix-2*gap ) ]
+                        # Location three steps prior to snap
+                        here = waypoints[ max( 0, ix-3*wpStep ) ]
                         line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
-                        # Location 3 minutes prior to snap
-                        here = waypoints[ ix-gap ]
+                        # Location two steps prior to snap
+                        here = waypoints[ max( 0, ix-2*wpStep ) ]
+                        line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
+                        # Location one step prior to snap
+                        here = waypoints[ max( 0, ix-wpStep ) ]
                         line1.append( "{:.6f},{:.6f}" .format( here[0], here[1] ))
                         # Location at time of snapshot
                         here = waypoints[ ix ]
@@ -335,12 +373,12 @@ def prepare( fileName, prepName, limit=0, sample=1, hasHead=True ):
                         destiny.write( ",".join(line1)  )
                         destiny.write( "\n" )
                         outCount += 1
-                        line1[-6:] = []
+                        line1[baseSize:] = []
 
                     pass # for each output line
                 pass # if input data is good
             pass # if input is selected for the sample
-            if inCount/sample == limit: break
+            if inCount/sampleRate == limit: break
             if isInteresting( inCount ):
                 print( "At", inCount )
         pass # if input was data row (not header)
@@ -376,10 +414,10 @@ def chooseFile():
 # I.e., return true for two-powers and sesqui-two-powers.
 
 def isInteresting( num ):
-    red = num & (num-1) # chops lowest bit from binary number
-    return (red == 0 # num has only one '1' bit => power of 2
-        or  red & (red-1) == 0 # num has only two bits and
-        and num & (num>>1) != 0) # two bits are adjacent => 3 x power of 2
+    red = num & (num-1)
+    return (red == 0
+        or  red & (red-1) == 0
+        and num & (num>>1) != 0)
 
 # ANNOTATE - Return an annotation that hopefully clarifies an atom of data
 
@@ -512,8 +550,8 @@ def haverdist( lon1, lat1, lon2, lat2 ):
     radius = 6371000   # radius of earth in metres
     lon1, lat1 = lon1*pi/180, lat1*pi/180
     lon2, lat2 = lon2*pi/180, lat2*pi/180
-    halver = haversin(lat1-lat2) + cos(lat1)*cos(lat2)*haversin(lon1-lon2)
-    dist = 2*radius*asin(sqrt(halver))    
+    haver = haversin(lat1-lat2) + cos(lat1)*cos(lat2)*haversin(lon1-lon2)
+    dist = 2*radius*asin(sqrt(haver))    
     return dist
 
 # HAVER SIN - "Half versed sign" trig function
@@ -587,3 +625,4 @@ if __name__ == "__main__" and COMMANDED:
         exit( 2 )
     else:
         illume( args[0], args[1] if len(args)>=2 else 10 )
+
