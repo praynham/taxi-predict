@@ -1,18 +1,18 @@
 # TAXI KNN - Build and run a kNN prediction model on taxi-trip data sets
-#
+
 # Parameters:
 #    train - training data frame of taxi trips
 #    test - testing data frame of taxi trips to be predicted
 #    k=10 - see taxi.knn.trial
 #    weights=NULL - see taxi.knn.trial
-#    scale=T - see taxi.knn.trial3
+#    scale=T - see taxi.knn.trial
 #
 # Returns:
 #    Array of predictions:
 #    - one row per test trip
 #    - columns: predicted longitude, predicted latitude,
 #        error in longitude prediction, error in latitude prediction,
-#        overall error in prediction (relative distance from actual)
+#        actual longitude, actual latitude.
 #    Prediction error is a measure of how many standard deviations
 #    the prediction is from the actual trip.
 
@@ -20,8 +20,10 @@ taxi.knn <- function( train, test, k=10, weights=NULL, scale=T ) {
   #
   # Create array to hold the results
   #
-  predicts <- matrix( ncol=5, nrow=nrow(test),
-      dimnames=list( NULL, c('lon.pred','lat.pred','lon.error','lat.error','dist.error') ))
+  predicts <- matrix( ncol=10, nrow=nrow(test),
+      dimnames=list( NULL, c(
+        'trip.id', 'intvl', 'lon.pred','lat.pred','pred.range',
+        'lon.dev','lat.dev','dist.error','lon.act','lat.act') ))
   #
   # Standard deviation of the destination locations
   # 
@@ -34,19 +36,26 @@ taxi.knn <- function( train, test, k=10, weights=NULL, scale=T ) {
     #
     # Calculate the trip's predicted destination
     #
-    pred.locat <- taxi.knn.trial(
+    prediction <- taxi.knn.trial(
         train, test[ix,],
         k=k, weights=weights, scale=scale )
+    pred.locat <- prediction[c(1,2)]
+    pred.deviat <- prediction[c(3,4)]
     #
     # Compare the predicted destination against the actual destination
     #
+    predicts[ix,1] <- test[ix,'trip.id']
+    predicts[ix,2] <- test[ix,'snap.time']
     act.locat <- c( test[ix,ncol(test)-1], test[ix,ncol(test)] )
-    predicts[ix,1] <- pred.locat[1]
-    predicts[ix,2] <- pred.locat[2]
+    predicts[ix,3] <- pred.locat[1]
+    predicts[ix,4] <- pred.locat[2]
+    predicts[ix,5] <- haver.dist( pred.locat, pred.locat+pred.deviat ) / 1000
     deltas <- act.locat - pred.locat
-    predicts[ix,3] <- deltas[1] / sd.lon
-    predicts[ix,4] <- deltas[2] / sd.lat
-    predicts[ix,5] <- sqrt(( deltas[1]^2 + deltas[2]^2 ) / (sd.lon^2 + sd.lat^2)) 
+    predicts[ix,6] <- deltas[1] / sd.lon
+    predicts[ix,7] <- deltas[2] / sd.lat
+    predicts[ix,8] <- haver.dist( act.locat, pred.locat ) / 1000
+    predicts[ix,9] <- test[ix,"lon.00"]
+    predicts[ix,10] <- test[ix,"lat.00"]
   }
   #
   # All done, return our predictions and discrepancies
@@ -55,7 +64,7 @@ taxi.knn <- function( train, test, k=10, weights=NULL, scale=T ) {
 }
 
 # TAXI KNN TRIAL - Do a KNN prediction for a taxi in progress
-#
+
 # Parameters:
 #    train - training data frame of taxi trips
 #    trial - data frame of one taxi trip, to be predicted
@@ -67,7 +76,8 @@ taxi.knn <- function( train, test, k=10, weights=NULL, scale=T ) {
 #    scale=T - T => scale each dimension to inverse of standard deviation
 #
 # Returns:
-#    Predicted destination, two-element vector (longitude, latitude)
+#    Predicted destination, and estimated error (1SD) of prediction as two-element 
+#    vector (longitude, latitude, lon.error, lat.error)
 
 taxi.knn.trial <- function( train, trial, k=10, weights=NULL, scale=T ) {
   #
@@ -78,6 +88,13 @@ taxi.knn.trial <- function( train, trial, k=10, weights=NULL, scale=T ) {
     weights <- rep( 0, ncol(train) )
     weights[c(8,13,14)] <- 1
   }
+  #
+  # Adjust longitude weights, so that they have same weight as latitudes
+  # when measured in distance (km), so that we calc good euclidian dists
+  #
+  lon.adjustment <- cos(41.155*pi/180)
+  lon.cols <- grep( "lon", names(train) )
+  weights[lon.cols] <- weights[lon.cols] * lon.adjustment
   #
   # Calculate distance of each training point from the trial point...
   #
@@ -107,26 +124,40 @@ taxi.knn.trial <- function( train, trial, k=10, weights=NULL, scale=T ) {
   # Apply a weighting, so that targets of closer points count for more
   # than targets of further points.
   #
+  closeness <- 1 / (1 + gaps[nearests])
   target.lons <- train[nearests,ncol(train)-1]
   target.lats <- train[nearests,ncol(train)]
-  closeness <- 1 / (1 + gaps[nearests])
   lon <- sum(target.lons*closeness) / sum(closeness)
   lat <- sum(target.lats*closeness) / sum(closeness)
+  sd.lon <- sd(target.lons)
+  sd.lat <- sd(target.lats)
   #
-  # Resulting mean location is our prediction of the trial's target location
+  # Resulting mean location is our prediction of the trial's target location.
+  # return the prediction, and the standard deviation of all the neighbours
   #
-  c(lon,lat)
+  c( lon, lat, sd.lon, sd.lat )
 }
 
-# SAMPLE RUN
+# HAVER DIST - return precise distance (m) between two points (lon/lan deg)
 #
-# > weights
-# [1] 0 0 0 0 0 0 0 1 0 0 0 0 1 1 1 1 1 1 1 1 0 0
-# > taxi.knn( taxi.1k, taxi.5, weights=weights, k=10 )
-#       lon.pred lat.pred   lon.error   lat.error dist.error
-# [1,] -8.621335 41.15879 -0.46034186  0.01763746  0.3363483
-# [2,] -8.682316 41.20539 -0.50274517 -0.30175245  0.4210296
-# [3,] -8.614824 41.16283 -0.38101323  0.06518933  0.2817511
-# [4,] -8.616557 41.16551  0.29407289 -0.51678523  0.4132604
-# [5,] -8.623494 41.13386  0.09716505 -0.13389747  0.1157727
-# > 
+# HaverDist is accurate for all pairs of points because it accounts for
+# Earth's spherical shape. The distance is caculated along a great circle
+# that connects the two points.
+
+haver.dist <- function( point1, point2 ) {
+  radius <- 6371000   # radius of earth in metres
+  lon1 <- point1[1] * pi/180   # convert degrees to radians
+  lat1 <- point1[2] * pi/180
+  lon2 <- point2[1] * pi/180
+  lat2 <- point2[2] * pi/180
+  haver <- haver.sin(lat1-lat2) + cos(lat1)*cos(lat2)*haver.sin(lon1-lon2)
+    # angle between two points relative to center of earth
+  dist <- 2*radius*asin(sqrt(haver))   # length of great arc    
+  dist
+}
+
+# HAVER SIN - "Half versed sign" trig function
+
+haver.sin <- function( angl ) {
+  sin(angl/2)^2
+}    
