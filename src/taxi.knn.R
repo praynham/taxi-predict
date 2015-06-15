@@ -51,8 +51,8 @@ taxi.knn <- function( train, test, k=10, weights=NULL, scale=T ) {
     predicts[ix,4] <- pred.locat[2]
     predicts[ix,5] <- haver.dist( pred.locat, pred.locat+pred.deviat ) / 1000
     deltas <- act.locat - pred.locat
-    predicts[ix,6] <- deltas[1] / sd.lon
-    predicts[ix,7] <- deltas[2] / sd.lat
+    predicts[ix,6] <- sd.lon
+    predicts[ix,7] <- sd.lat
     predicts[ix,8] <- haver.dist( act.locat, pred.locat ) / 1000
     predicts[ix,9] <- test[ix,"lon.00"]
     predicts[ix,10] <- test[ix,"lat.00"]
