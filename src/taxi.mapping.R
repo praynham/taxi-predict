@@ -64,7 +64,7 @@ plot.trip = function( map, model, index=0, title="Porto Taxi", point.scale=1, ci
       geom_path( data=model[1:index,], aes(x=lon.act,y=lat.act),
                  size=point.scale, color="blue" ) +
       geom_point( data=model[index,], aes(x=lon.pred,y=lat.pred),
-                  size=circle.scale*120*model[index,"dist.error"],
+                  size=circle.scale*120*model[index,"pred.range"],
                   color="red", alpha=0.25 ) +
       geom_point( data=model[index,], aes(x=lon.act,y=lat.act),
                   size=3*point.scale, color="blue", shape=16 ) +
